@@ -148,7 +148,11 @@ echo "Target Architecture: $ARCHITECTURE"
 PACKAGE_NAME="claude-desktop"
 MAINTAINER="Claude Desktop Linux Maintainers"
 DESCRIPTION="Claude Desktop for Linux"
-PROJECT_ROOT="$(pwd)" WORK_DIR="$PROJECT_ROOT/build" APP_STAGING_DIR="$WORK_DIR/electron-app" VERSION=""
+PROJECT_ROOT="$(pwd)"
+WORK_DIR="$PROJECT_ROOT/build"
+DOWNLOAD_CACHE_DIR="$PROJECT_ROOT/.build-cache"
+APP_STAGING_DIR="$WORK_DIR/electron-app"
+VERSION=""
 echo -e "\033[1;36m--- End Argument Parsing ---\033[0m"
 
 
@@ -261,6 +265,7 @@ if [ -n "$DEPS_TO_INSTALL" ]; then
     echo "✓ System dependencies installed successfully via sudo."
 fi
 
+mkdir -p "$DOWNLOAD_CACHE_DIR"
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR"
 mkdir -p "$APP_STAGING_DIR"
@@ -403,13 +408,21 @@ echo "Using asar executable: $ASAR_EXEC"
 
 
 echo -e "\033[1;36m--- Download the latest Claude executable ---\033[0m"
-echo "📥 Downloading Claude Desktop installer for $ARCHITECTURE..."
 CLAUDE_EXE_PATH="$WORK_DIR/$CLAUDE_EXE_FILENAME"
-if ! wget -O "$CLAUDE_EXE_PATH" "$CLAUDE_DOWNLOAD_URL"; then
-    echo "❌ Failed to download Claude Desktop installer from $CLAUDE_DOWNLOAD_URL"
-    exit 1
+CACHED_CLAUDE_EXE_PATH="$DOWNLOAD_CACHE_DIR/$CLAUDE_EXE_FILENAME"
+
+if [ -f "$CACHED_CLAUDE_EXE_PATH" ]; then
+    echo "✅ Found cached Claude installer in $DOWNLOAD_CACHE_DIR. Copying to build directory."
+    cp "$CACHED_CLAUDE_EXE_PATH" "$CLAUDE_EXE_PATH"
+else
+    echo "📥 Downloading Claude Desktop installer for $ARCHITECTURE to $DOWNLOAD_CACHE_DIR..."
+    if ! wget -O "$CACHED_CLAUDE_EXE_PATH" "$CLAUDE_DOWNLOAD_URL"; then
+        echo "❌ Failed to download Claude Desktop installer from $CLAUDE_DOWNLOAD_URL"
+        exit 1
+    fi
+    echo "✓ Download complete. Copying to build directory."
+    cp "$CACHED_CLAUDE_EXE_PATH" "$CLAUDE_EXE_PATH"
 fi
-echo "✓ Download complete: $CLAUDE_EXE_FILENAME"
 
 echo "📦 Extracting resources from $CLAUDE_EXE_FILENAME into separate directory..."
 CLAUDE_EXTRACT_DIR="$WORK_DIR/claude-extract"

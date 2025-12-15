@@ -131,13 +131,16 @@ modules:
       - if [ -f icons/claude-desktop-64.png ]; then install -Dm644 icons/claude-desktop-64.png /app/share/icons/hicolor/64x64/apps/$FLATPAK_APP_ID.png; fi
       - mkdir -p /app/lib/claude-desktop
       - cp -r app/* /app/lib/claude-desktop/
+      - mkdir -p /app/lib/claude-desktop/node_modules/electron/dist/resources
+      - mv /app/lib/claude-desktop/app.asar /app/lib/claude-desktop/node_modules/electron/dist/resources/
+      - mv /app/lib/claude-desktop/app.asar.unpacked /app/lib/claude-desktop/node_modules/electron/dist/resources/
     sources:
       - type: dir
         path: $CONTEXT_DIR
 EOF
 
 echo "Building Flatpak bundle..."
-flatpak-builder --force-clean --repo="$REPO_DIR" "$BUILD_DIR" "$MANIFEST_PATH"
+flatpak-builder --force-clean --default-branch=stable --repo="$REPO_DIR" "$BUILD_DIR" "$MANIFEST_PATH"
 flatpak build-bundle "$REPO_DIR" "$BUNDLE_PATH" "$FLATPAK_APP_ID" stable --arch="$FLATPAK_ARCH"
 
 echo "✓ Flatpak bundle created at $BUNDLE_PATH"

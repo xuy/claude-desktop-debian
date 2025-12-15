@@ -1,6 +1,8 @@
 # Build output
 build/
 build_*/
+.build-cache/
+.flatpak-builder/
 
 # Dev folder
 .dev/
