@@ -32,7 +32,8 @@ Download the latest `.deb` or `.AppImage` from the [Releases page](https://githu
 
 #### Prerequisites
 
-- Debian-based Linux distribution (Debian, Ubuntu, Linux Mint, MX Linux, etc.)
+- Debian-based Linux distribution (Debian, Ubuntu, Linux Mint, MX Linux, etc.) for `.deb`/AppImage builds
+- Fedora/Atomic desktops are supported for the Flatpak build target
 - Git
 - Basic build tools (automatically installed by the script)
 
@@ -49,9 +50,28 @@ cd claude-desktop-debian
 # Build an AppImage
 ./build.sh --build appimage
 
+# Build a Flatpak bundle (works on Fedora/Atomic too)
+./build.sh --build flatpak
+
 # Build with custom options
 ./build.sh --build deb --clean no  # Keep intermediate files
 ```
+
+##### Flatpak on Fedora/Atomic quick-start
+
+1. Install build-time prerequisites (example for Fedora Silverblue/Atomic Desktop):
+   ```bash
+   sudo rpm-ostree install p7zip p7zip-plugins icoutils ImageMagick rsync flatpak flatpak-builder wget
+   ```
+2. Build the Flatpak bundle:
+   ```bash
+   ./build.sh --build flatpak
+   ```
+3. Install the resulting bundle (user scope):
+   ```bash
+   flatpak install --user ./claude-desktop-<VERSION>-<ARCH>.flatpak
+   ```
+   Replace `<VERSION>`/`<ARCH>` with the filenames printed by the build script (e.g., `claude-desktop-1.0.0-amd64.flatpak`).
 
 #### Installing the Built Package
 
