@@ -1,42 +1,106 @@
 #!/bin/bash
 set -euo pipefail
 
+# --- Argument Parsing ---
+echo -e "\033[1;36m--- Argument Parsing ---\033[0m"
+BUILD_FORMAT="deb"    CLEANUP_ACTION="yes"  TEST_FLAGS_MODE=false
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        -b|--build)
+        if [[ -z "$2" || "$2" == -* ]]; then              echo "❌ Error: Argument for $1 is missing" >&2; exit 1
+        fi
+        BUILD_FORMAT="$2"
+        shift 2 ;; # Shift past flag and value
+        -c|--clean)
+        if [[ -z "$2" || "$2" == -* ]]; then              echo "❌ Error: Argument for $1 is missing" >&2; exit 1
+        fi
+        CLEANUP_ACTION="$2"
+        shift 2 ;; # Shift past flag and value
+        --test-flags)
+        TEST_FLAGS_MODE=true
+        shift # past argument
+        ;;
+        -h|--help)
+        echo "Usage: $0 [--build deb|appimage|flatpak] [--clean yes|no] [--test-flags]"
+        echo "  --build: Specify the build format (deb, appimage, or flatpak). Default: deb"
+        echo "  --clean: Specify whether to clean intermediate build files (yes or no). Default: yes"
+        echo "  --test-flags: Parse flags, print results, and exit without building."
+        exit 0
+        ;;
+        *)            echo "❌ Unknown option: $1" >&2
+        echo "Use -h or --help for usage information." >&2
+        exit 1
+        ;;
+    esac
+done
+
+# Validate arguments
+BUILD_FORMAT=$(echo "$BUILD_FORMAT" | tr '[:upper:]' '[:lower:]') CLEANUP_ACTION=$(echo "$CLEANUP_ACTION" | tr '[:upper:]' '[:lower:]')
+if [[ "$BUILD_FORMAT" != "deb" && "$BUILD_FORMAT" != "appimage" && "$BUILD_FORMAT" != "flatpak" ]]; then
+    echo "❌ Invalid build format specified: '$BUILD_FORMAT'. Must be 'deb', 'appimage', or 'flatpak'." >&2
+    exit 1
+fi
+if [[ "$CLEANUP_ACTION" != "yes" && "$CLEANUP_ACTION" != "no" ]]; then
+    echo "❌ Invalid cleanup option specified: '$CLEANUP_ACTION'. Must be 'yes' or 'no'." >&2
+    exit 1
+fi
+
+echo "Selected build format: $BUILD_FORMAT"
+echo "Cleanup intermediate files: $CLEANUP_ACTION"
+
+PERFORM_CLEANUP=false
+if [ "$CLEANUP_ACTION" = "yes" ]; then
+    PERFORM_CLEANUP=true
+fi
+echo -e "\033[1;36m--- End Argument Parsing ---\033[0m"
+
+# Exit early if --test-flags mode is enabled
+if [ "$TEST_FLAGS_MODE" = true ]; then
+    echo "--- Test Flags Mode Enabled ---"
+    # Target Architecture is implicitly detected now
+    echo "Build Format: $BUILD_FORMAT"
+    echo "Clean Action: $CLEANUP_ACTION"
+    echo "Exiting without build."
+    exit 0
+fi
+
 # --- Architecture Detection ---
 echo -e "\033[1;36m--- Architecture Detection ---\033[0m"
 echo "⚙️ Detecting system architecture..."
-HOST_ARCH=$(dpkg --print-architecture)
-echo "Detected host architecture: $HOST_ARCH"
-cat /etc/os-release && uname -m && dpkg --print-architecture
-
-# Set variables based on detected architecture
-if [ "$HOST_ARCH" = "amd64" ]; then
-    CLAUDE_DOWNLOAD_URL="https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-x64/Claude-Setup-x64.exe"
-    ARCHITECTURE="amd64"
-    CLAUDE_EXE_FILENAME="Claude-Setup-x64.exe"
-    echo "Configured for amd64 build."
-elif [ "$HOST_ARCH" = "arm64" ]; then
-    CLAUDE_DOWNLOAD_URL="https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-arm64/Claude-Setup-arm64.exe"
-    ARCHITECTURE="arm64"
-    CLAUDE_EXE_FILENAME="Claude-Setup-arm64.exe"
-    echo "Configured for arm64 build."
+HOST_ARCH_RAW=$(uname -m)
+if command -v dpkg >/dev/null 2>&1; then
+    HOST_ARCH_DEB=$(dpkg --print-architecture)
 else
-    echo "❌ Unsupported architecture: $HOST_ARCH. This script currently supports amd64 and arm64."
+    HOST_ARCH_DEB=""
+fi
+
+if [ "$HOST_ARCH_RAW" = "x86_64" ] || [ "$HOST_ARCH_DEB" = "amd64" ]; then
+    ARCHITECTURE="amd64"
+    CLAUDE_DOWNLOAD_URL="https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-x64/Claude-Setup-x64.exe"
+    CLAUDE_EXE_FILENAME="Claude-Setup-x64.exe"
+elif [ "$HOST_ARCH_RAW" = "aarch64" ] || [ "$HOST_ARCH_DEB" = "arm64" ]; then
+    ARCHITECTURE="arm64"
+    CLAUDE_DOWNLOAD_URL="https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-arm64/Claude-Setup-arm64.exe"
+    CLAUDE_EXE_FILENAME="Claude-Setup-arm64.exe"
+else
+    echo "❌ Unsupported architecture: $HOST_ARCH_RAW""${HOST_ARCH_DEB:+ (dpkg reported: $HOST_ARCH_DEB)}"". This script currently supports amd64 and arm64."
     exit 1
 fi
-echo "Target Architecture (detected): $ARCHITECTURE" # Renamed echo
+echo "Detected host architecture: $HOST_ARCH_RAW"
+echo "Target Architecture: $ARCHITECTURE"
 echo -e "\033[1;36m--- End Architecture Detection ---\033[0m"
-
-
-if [ ! -f "/etc/debian_version" ]; then
-    echo "❌ This script requires a Debian-based Linux distribution"
-    exit 1
-fi
 
 if [ "$EUID" -eq 0 ]; then
    echo "❌ This script should not be run using sudo or as the root user."
    echo "   It will prompt for sudo password when needed for specific actions."
    echo "   Please run as a normal user."
    exit 1
+fi
+
+if [ "$BUILD_FORMAT" != "flatpak" ] && [ ! -f "/etc/debian_version" ]; then
+    echo "❌ This build target requires a Debian-based Linux distribution"
+    exit 1
 fi
 
 ORIGINAL_USER=$(whoami)
@@ -72,75 +136,20 @@ fi # End of if [ -d "$ORIGINAL_HOME/.nvm" ] check
 
 
 echo "System Information:"
-echo "Distribution: $(grep "PRETTY_NAME" /etc/os-release | cut -d'"' -f2)"
-echo "Debian version: $(cat /etc/debian_version)"
-echo "Target Architecture: $ARCHITECTURE" 
+if [ -f /etc/os-release ]; then
+    echo "Distribution: $(grep "PRETTY_NAME" /etc/os-release | cut -d'"' -f2)"
+else
+    echo "Distribution: (unknown)"
+fi
+if [ -f /etc/debian_version ]; then
+    echo "Debian version: $(cat /etc/debian_version)"
+fi
+echo "Target Architecture: $ARCHITECTURE"
 PACKAGE_NAME="claude-desktop"
 MAINTAINER="Claude Desktop Linux Maintainers"
 DESCRIPTION="Claude Desktop for Linux"
-PROJECT_ROOT="$(pwd)" WORK_DIR="$PROJECT_ROOT/build" APP_STAGING_DIR="$WORK_DIR/electron-app" VERSION="" 
-echo -e "\033[1;36m--- Argument Parsing ---\033[0m"
-BUILD_FORMAT="deb"    CLEANUP_ACTION="yes"  TEST_FLAGS_MODE=false
-while [[ $# -gt 0 ]]; do
-    key="$1"
-    case $key in
-        -b|--build)
-        if [[ -z "$2" || "$2" == -* ]]; then              echo "❌ Error: Argument for $1 is missing" >&2; exit 1
-        fi
-        BUILD_FORMAT="$2"
-        shift 2 ;; # Shift past flag and value
-        -c|--clean)
-        if [[ -z "$2" || "$2" == -* ]]; then              echo "❌ Error: Argument for $1 is missing" >&2; exit 1
-        fi
-        CLEANUP_ACTION="$2"
-        shift 2 ;; # Shift past flag and value
-        --test-flags)
-        TEST_FLAGS_MODE=true
-        shift # past argument
-        ;;
-        -h|--help)
-        echo "Usage: $0 [--build deb|appimage] [--clean yes|no] [--test-flags]"
-        echo "  --build: Specify the build format (deb or appimage). Default: deb"
-        echo "  --clean: Specify whether to clean intermediate build files (yes or no). Default: yes"
-        echo "  --test-flags: Parse flags, print results, and exit without building."
-        exit 0
-        ;;
-        *)            echo "❌ Unknown option: $1" >&2
-        echo "Use -h or --help for usage information." >&2
-        exit 1
-        ;;
-    esac
-done
-
-# Validate arguments
-BUILD_FORMAT=$(echo "$BUILD_FORMAT" | tr '[:upper:]' '[:lower:]') CLEANUP_ACTION=$(echo "$CLEANUP_ACTION" | tr '[:upper:]' '[:lower:]')
-if [[ "$BUILD_FORMAT" != "deb" && "$BUILD_FORMAT" != "appimage" ]]; then
-    echo "❌ Invalid build format specified: '$BUILD_FORMAT'. Must be 'deb' or 'appimage'." >&2
-    exit 1
-fi
-if [[ "$CLEANUP_ACTION" != "yes" && "$CLEANUP_ACTION" != "no" ]]; then
-    echo "❌ Invalid cleanup option specified: '$CLEANUP_ACTION'. Must be 'yes' or 'no'." >&2
-    exit 1
-fi
-
-echo "Selected build format: $BUILD_FORMAT"
-echo "Cleanup intermediate files: $CLEANUP_ACTION"
-
-PERFORM_CLEANUP=false
-if [ "$CLEANUP_ACTION" = "yes" ]; then
-    PERFORM_CLEANUP=true
-fi
+PROJECT_ROOT="$(pwd)" WORK_DIR="$PROJECT_ROOT/build" APP_STAGING_DIR="$WORK_DIR/electron-app" VERSION=""
 echo -e "\033[1;36m--- End Argument Parsing ---\033[0m"
-
-# Exit early if --test-flags mode is enabled
-if [ "$TEST_FLAGS_MODE" = true ]; then
-    echo "--- Test Flags Mode Enabled ---"
-    # Target Architecture is implicitly detected now
-    echo "Build Format: $BUILD_FORMAT"
-    echo "Clean Action: $CLEANUP_ACTION"
-    echo "Exiting without build."
-    exit 0
-fi
 
 
 check_command() {
@@ -155,44 +164,99 @@ check_command() {
 
 echo "Checking dependencies..."
 DEPS_TO_INSTALL=""
-COMMON_DEPS="p7zip wget wrestool icotool convert"
+COMMON_DEPS="7z wget wrestool icotool convert rsync"
 DEB_DEPS="dpkg-deb"
-APPIMAGE_DEPS="" 
+APPIMAGE_DEPS=""
+FLATPAK_DEPS="flatpak-builder flatpak"
 ALL_DEPS_TO_CHECK="$COMMON_DEPS"
 if [ "$BUILD_FORMAT" = "deb" ]; then
     ALL_DEPS_TO_CHECK="$ALL_DEPS_TO_CHECK $DEB_DEPS"
 elif [ "$BUILD_FORMAT" = "appimage" ]; then
     ALL_DEPS_TO_CHECK="$ALL_DEPS_TO_CHECK $APPIMAGE_DEPS"
+elif [ "$BUILD_FORMAT" = "flatpak" ]; then
+    ALL_DEPS_TO_CHECK="$ALL_DEPS_TO_CHECK $FLATPAK_DEPS"
+fi
+
+PKG_MANAGER=""
+if command -v apt >/dev/null 2>&1; then
+    PKG_MANAGER="apt"
+elif command -v dnf >/dev/null 2>&1; then
+    PKG_MANAGER="dnf"
 fi
 
 for cmd in $ALL_DEPS_TO_CHECK; do
     if ! check_command "$cmd"; then
         case "$cmd" in
-            "p7zip") DEPS_TO_INSTALL="$DEPS_TO_INSTALL p7zip-full" ;;
-            "wget") DEPS_TO_INSTALL="$DEPS_TO_INSTALL wget" ;;
-            "wrestool"|"icotool") DEPS_TO_INSTALL="$DEPS_TO_INSTALL icoutils" ;;
-            "convert") DEPS_TO_INSTALL="$DEPS_TO_INSTALL imagemagick" ;;
-            "dpkg-deb") DEPS_TO_INSTALL="$DEPS_TO_INSTALL dpkg-dev" ;;
+            "7z")
+                if [ "$PKG_MANAGER" = "apt" ]; then
+                    DEPS_TO_INSTALL="$DEPS_TO_INSTALL p7zip-full"
+                elif [ "$PKG_MANAGER" = "dnf" ]; then
+                    DEPS_TO_INSTALL="$DEPS_TO_INSTALL p7zip p7zip-plugins"
+                fi
+                ;;
+            "wget")
+                DEPS_TO_INSTALL="$DEPS_TO_INSTALL wget"
+                ;;
+            "wrestool"|"icotool")
+                if [ "$PKG_MANAGER" = "apt" ]; then
+                    DEPS_TO_INSTALL="$DEPS_TO_INSTALL icoutils"
+                elif [ "$PKG_MANAGER" = "dnf" ]; then
+                    DEPS_TO_INSTALL="$DEPS_TO_INSTALL icoutils"
+                fi
+                ;;
+            "convert")
+                if [ "$PKG_MANAGER" = "apt" ]; then
+                    DEPS_TO_INSTALL="$DEPS_TO_INSTALL imagemagick"
+                elif [ "$PKG_MANAGER" = "dnf" ]; then
+                    DEPS_TO_INSTALL="$DEPS_TO_INSTALL ImageMagick"
+                fi
+                ;;
+            "dpkg-deb")
+                DEPS_TO_INSTALL="$DEPS_TO_INSTALL dpkg-dev"
+                ;;
+            "flatpak-builder")
+                DEPS_TO_INSTALL="$DEPS_TO_INSTALL flatpak-builder"
+                ;;
+            "flatpak")
+                DEPS_TO_INSTALL="$DEPS_TO_INSTALL flatpak"
+                ;;
+            "rsync")
+                DEPS_TO_INSTALL="$DEPS_TO_INSTALL rsync"
+                ;;
         esac
     fi
 done
 
 if [ -n "$DEPS_TO_INSTALL" ]; then
     echo "System dependencies needed: $DEPS_TO_INSTALL"
-    echo "Attempting to install using sudo..."
-        if ! sudo -v; then
+    if [ -z "$PKG_MANAGER" ]; then
+        echo "❌ Could not detect a supported package manager (apt or dnf). Please install the dependencies manually."
+        exit 1
+    fi
+
+    echo "Attempting to install using sudo $PKG_MANAGER..."
+    if ! sudo -v; then
         echo "❌ Failed to validate sudo credentials. Please ensure you can run sudo."
         exit 1
     fi
+
+    if [ "$PKG_MANAGER" = "apt" ]; then
         if ! sudo apt update; then
-        echo "❌ Failed to run 'sudo apt update'."
-        exit 1
-    fi
-    # Here on purpose no "" to expand the 'list', thus
-    # shellcheck disable=SC2086
-    if ! sudo apt install -y $DEPS_TO_INSTALL; then
-         echo "❌ Failed to install dependencies using 'sudo apt install'."
-         exit 1
+            echo "❌ Failed to run 'sudo apt update'."
+            exit 1
+        fi
+        # Here on purpose no "" to expand the 'list', thus
+        # shellcheck disable=SC2086
+        if ! sudo apt install -y $DEPS_TO_INSTALL; then
+             echo "❌ Failed to install dependencies using 'sudo apt install'."
+             exit 1
+        fi
+    elif [ "$PKG_MANAGER" = "dnf" ]; then
+        # shellcheck disable=SC2086
+        if ! sudo dnf install -y $DEPS_TO_INSTALL; then
+             echo "❌ Failed to install dependencies using 'sudo dnf install'."
+             exit 1
+        fi
     fi
     echo "✓ System dependencies installed successfully via sudo."
 fi
@@ -772,7 +836,7 @@ elif [ "$BUILD_FORMAT" = "appimage" ]; then
     APPIMAGE_FILE=$(find "$WORK_DIR" -maxdepth 1 -name "${PACKAGE_NAME}-${VERSION}-${ARCHITECTURE}.AppImage" | head -n 1)
     echo "✓ AppImage Build complete!"
     if [ -n "$APPIMAGE_FILE" ] && [ -f "$APPIMAGE_FILE" ]; then
-        FINAL_OUTPUT_PATH="./$(basename "$APPIMAGE_FILE")" 
+        FINAL_OUTPUT_PATH="./$(basename "$APPIMAGE_FILE")"
         mv "$APPIMAGE_FILE" "$FINAL_OUTPUT_PATH"
         echo "Package created at: $FINAL_OUTPUT_PATH"
 
@@ -797,6 +861,24 @@ EOF
 
     else
         echo "Warning: Could not determine final .AppImage file path from $WORK_DIR for ${ARCHITECTURE}."
+        FINAL_OUTPUT_PATH="Not Found"
+    fi
+elif [ "$BUILD_FORMAT" = "flatpak" ]; then
+    echo "📦 Calling Flatpak packaging script for $ARCHITECTURE..."
+    chmod +x scripts/build-flatpak.sh
+    if ! scripts/build-flatpak.sh \
+        "$VERSION" "$ARCHITECTURE" "$WORK_DIR" "$APP_STAGING_DIR" "$PACKAGE_NAME"; then
+        echo "❌ Flatpak packaging script failed."
+        exit 1
+    fi
+    FLATPAK_FILE=$(find "$WORK_DIR" -maxdepth 1 -name "${PACKAGE_NAME}-${VERSION}-${ARCHITECTURE}.flatpak" | head -n 1)
+    echo "✓ Flatpak Build complete!"
+    if [ -n "$FLATPAK_FILE" ] && [ -f "$FLATPAK_FILE" ]; then
+        FINAL_OUTPUT_PATH="./$(basename "$FLATPAK_FILE")"
+        mv "$FLATPAK_FILE" "$FINAL_OUTPUT_PATH"
+        echo "Package created at: $FINAL_OUTPUT_PATH"
+    else
+        echo "Warning: Could not determine final .flatpak file path from $WORK_DIR for ${ARCHITECTURE}."
         FINAL_OUTPUT_PATH="Not Found"
     fi
 fi
@@ -853,6 +935,16 @@ elif [ "$BUILD_FORMAT" = "appimage" ]; then
         fi
     else
         echo -e "⚠️ AppImage file not found. Cannot provide usage instructions."
+    fi
+elif [ "$BUILD_FORMAT" = "flatpak" ]; then
+    if [ "$FINAL_OUTPUT_PATH" != "Not Found" ] && [ -e "$FINAL_OUTPUT_PATH" ]; then
+        echo -e "✅ Flatpak bundle created at: \033[1;36m$FINAL_OUTPUT_PATH\033[0m"
+        echo -e "\nInstall locally (user scope):"
+        echo -e "   \033[1;32mflatpak install --user $FINAL_OUTPUT_PATH\033[0m"
+        echo -e "\nIf you prefer system-wide installation:"
+        echo -e "   \033[1;32msudo flatpak install $FINAL_OUTPUT_PATH\033[0m"
+    else
+        echo -e "⚠️ Flatpak bundle not found. Cannot provide install instructions."
     fi
 fi
 echo -e "\033[1;34m======================\033[0m"
